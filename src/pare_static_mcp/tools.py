@@ -6,6 +6,7 @@ from pare_static_mcp.config import load_config
 from pare_static_mcp.apk import classes as classes_mod
 from pare_static_mcp.apk import loader as loader_mod
 from pare_static_mcp.apk import manifest as manifest_mod
+from pare_static_mcp.apk import smali as smali_mod
 from pare_static_mcp.apk import state as state_mod
 from pare_static_mcp.apk import strings as strings_mod
 from pare_static_mcp.apk import symbols as symbols_mod
@@ -97,3 +98,12 @@ async def find_symbol(symbol: str, kind: str = "def", cls: str = "") -> str:
         return _ok(f"{len(rows)} {kind} rows for {symbol}", rows=rows)
     except Exception as e:
         return _err("find_symbol failed", e)
+
+
+async def grep_smali(pattern: str) -> str:
+    try:
+        st = _require_current()
+        rows = await asyncio.to_thread(smali_mod.grep, st.analysis, pattern)
+        return _ok(f"{len(rows)} smali matches", rows=rows)
+    except Exception as e:
+        return _err("grep_smali failed", e)
