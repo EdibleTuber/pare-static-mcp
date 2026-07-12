@@ -4,6 +4,7 @@ import json
 from typing import Any
 from pare_static_mcp.config import load_config
 from pare_static_mcp.apk import loader as loader_mod
+from pare_static_mcp.apk import manifest as manifest_mod
 from pare_static_mcp.apk import state as state_mod
 
 CFG = load_config()
@@ -38,3 +39,12 @@ async def load_apk(path: str) -> str:
                    native_libs=st.native_libs, dynamic_load=st.dynamic_load)
     except Exception as e:
         return _err("load_apk failed", e)
+
+
+async def read_manifest() -> str:
+    try:
+        st = _require_current()
+        m = await asyncio.to_thread(manifest_mod.parse, st.apk)
+        return _ok(f"manifest for {st.package}", **m)
+    except Exception as e:
+        return _err("read_manifest failed", e)
