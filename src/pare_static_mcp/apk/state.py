@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -16,6 +17,7 @@ class APKState:
     dynamic_load: list[str]
     _xref_built: bool = False
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    xref_lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 CURRENT: APKState | None = None

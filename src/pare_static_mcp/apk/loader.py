@@ -55,6 +55,7 @@ def _detect_dynamic(analysis) -> list[str]:
 
 
 def ensure_xref(state: APKState) -> None:
-    if not state._xref_built:
-        state.analysis.create_xref()
-        state._xref_built = True
+    with state.xref_lock:
+        if not state._xref_built:
+            state.analysis.create_xref()
+            state._xref_built = True

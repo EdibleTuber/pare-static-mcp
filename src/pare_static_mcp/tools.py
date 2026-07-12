@@ -6,6 +6,7 @@ from pare_static_mcp.config import load_config
 from pare_static_mcp.apk import loader as loader_mod
 from pare_static_mcp.apk import manifest as manifest_mod
 from pare_static_mcp.apk import state as state_mod
+from pare_static_mcp.apk import strings as strings_mod
 
 CFG = load_config()
 
@@ -48,3 +49,19 @@ async def read_manifest() -> str:
         return _ok(f"manifest for {st.package}", **m)
     except Exception as e:
         return _err("read_manifest failed", e)
+
+
+def _extract_strings_blocking(state: state_mod.APKState, filt: str) -> list[dict]:
+    """Run xref build + string extraction on the calling thread (for asyncio.to_thread)."""
+    loader_mod.ensure_xref(state)
+    return strings_mod.extract(state.analysis, filt)
+
+
+async def extract_strings(filter: str = "") -> str:
+    try:
+        st = _require_current()
+        rows = await asyncio.to_thread(_extract_strings_blocking, st, filter)
+        hint = "" if filter else " (pass filter= to narrow)"
+        return _ok(f"{len(rows)} strings{hint}", rows=rows)
+    except Exception as e:
+        return _err("extract_strings failed", e)
