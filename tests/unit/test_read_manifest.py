@@ -8,7 +8,8 @@ async def test_read_manifest_shape():
     await tools.load_apk(str(test_apk()))
     out = json.loads(await tools.read_manifest())
     for k in ("permissions", "activities", "services", "receivers",
-              "providers", "exported", "application_class"):
+              "providers", "exported", "application_class",
+              "debuggable", "allow_backup"):
         assert k in out
 
 

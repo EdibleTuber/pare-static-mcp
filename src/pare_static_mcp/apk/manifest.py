@@ -9,9 +9,15 @@ def parse(apk) -> dict:
     at least one intent-filter AND android:exported is not explicitly "false").
     This mirrors Android's pre-31 implicit-export rule.
 
-    androguard 4.1.3 note: get_attribute_value(tag, attr, name=n) is the
-    correct accessor for per-component attributes; get_element() does not
-    exist in this version.
+    Implementation: iterates manifest elements directly via apk.find_tags(kind)
+    and reads attributes via apk.get_value_from_tag(elem, attr). This avoids
+    the formatted-name round-trip bug in get_attribute_value(kind, attr, name=n)
+    where androguard's is_tag_matched does not apply _format_value, causing
+    None returns for APKs with short-form component names (e.g. ".Foo").
+
+    androguard 4.1.3: find_tags returns lxml.etree._Element objects;
+    get_value_from_tag reads the android:-namespaced attribute from a specific
+    element. Intent-filter children appear as bare "intent-filter" child tags.
     """
     target = apk.get_effective_target_sdk_version()
     activities = apk.get_activities()
@@ -20,20 +26,32 @@ def parse(apk) -> dict:
     providers = apk.get_providers()
 
     exported: list[str] = []
-    for kind, names in (
+    for kind, formatted_names in (
         ("activity", activities),
         ("service", services),
         ("receiver", receivers),
         ("provider", providers),
     ):
-        for n in names:
-            exp = apk.get_attribute_value(kind, "exported", name=n)
-            ifs = apk.get_intent_filters(kind, n)
-            is_exp = (str(exp).lower() == "true") or (
-                exp is None and ifs and target < 31
+        for elem in apk.find_tags(kind):
+            raw_name = apk.get_value_from_tag(elem, "name")
+            exp_val = apk.get_value_from_tag(elem, "exported")
+            has_intent_filter = any(
+                child.tag == "intent-filter" for child in elem
+            )
+            is_exp = exp_val == "true" or (
+                target < 31 and has_intent_filter and exp_val != "false"
             )
             if is_exp:
-                exported.append(n)
+                # Map raw element name back to the formatted name returned by
+                # get_<kind>s() so the exported list is consistent with the
+                # other returned lists.  Handles short-form names (.Foo →
+                # com.pkg.Foo) via the endswith check.
+                matched = next(
+                    (fn for fn in formatted_names
+                     if fn == raw_name or fn.endswith(raw_name)),
+                    raw_name,
+                )
+                exported.append(matched)
 
     return {
         "permissions": apk.get_permissions(),
