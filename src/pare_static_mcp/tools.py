@@ -3,6 +3,7 @@ import asyncio
 import json
 from typing import Any
 from pare_static_mcp.config import load_config
+from pare_static_mcp.apk import classes as classes_mod
 from pare_static_mcp.apk import loader as loader_mod
 from pare_static_mcp.apk import manifest as manifest_mod
 from pare_static_mcp.apk import state as state_mod
@@ -65,3 +66,18 @@ async def extract_strings(filter: str = "") -> str:
         return _ok(f"{len(rows)} strings{hint}", rows=rows)
     except Exception as e:
         return _err("extract_strings failed", e)
+
+
+def _list_methods_blocking(state: state_mod.APKState, cls: str) -> list[dict]:
+    """Ensure xref then enumerate methods — runs on a thread (thread-safe via xref_lock)."""
+    loader_mod.ensure_xref(state)
+    return classes_mod.list_methods(state.analysis, cls)
+
+
+async def list_methods(cls: str) -> str:
+    try:
+        st = _require_current()
+        rows = await asyncio.to_thread(_list_methods_blocking, st, cls)
+        return _ok(f"{len(rows)} methods in {cls}", rows=rows)
+    except Exception as e:
+        return _err("list_methods failed", e)
