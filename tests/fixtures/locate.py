@@ -19,6 +19,7 @@ def test_apk() -> Path:
     if not p.is_file():
         pytest.skip(f"test APK not present at {p} (set PARE_STATIC_TEST_APK)")
     return p
+test_apk.__test__ = False
 
 requires_apk = pytest.mark.skipif(
     not apk_path().is_file(),
