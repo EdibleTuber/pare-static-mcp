@@ -96,9 +96,6 @@ def _jadx_class(state, cls: str, cfg) -> str:
             timeout=cfg.jadx_timeout_s,
             text=True,
         )
-        # cap retained stdout
-        _ = proc.stdout[: cfg.jadx_stdout_cap]
-
         java_files = list(outdir.rglob("*.java"))
         if not java_files:
             stderr_snippet = proc.stderr[-1000:] if proc.stderr else ""
@@ -106,8 +103,7 @@ def _jadx_class(state, cls: str, cfg) -> str:
                 f"jadx produced no source (rc={proc.returncode}): {stderr_snippet}"
             )
         return max(java_files, key=lambda p: p.stat().st_size).read_text(
-            errors="replace"
-        )
+            errors="replace")[: cfg.jadx_stdout_cap]
     finally:
         shutil.rmtree(outdir, ignore_errors=True)
 
