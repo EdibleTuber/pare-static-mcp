@@ -4,6 +4,7 @@ import json
 from typing import Any
 from pare_static_mcp.config import load_config
 from pare_static_mcp.apk import classes as classes_mod
+from pare_static_mcp.apk import decompile as decompile_mod
 from pare_static_mcp.apk import loader as loader_mod
 from pare_static_mcp.apk import manifest as manifest_mod
 from pare_static_mcp.apk import smali as smali_mod
@@ -107,3 +108,17 @@ async def grep_smali(pattern: str) -> str:
         return _ok(f"{len(rows)} smali matches", rows=rows)
     except Exception as e:
         return _err("grep_smali failed", e)
+
+
+async def decompile_method(cls: str, method: str, signature: str = "",
+                           lang: str = "java") -> str:
+    try:
+        st = _require_current()
+        if lang == "java" and not CFG.jadx_available:
+            lang = "smali"   # graceful degrade when jadx not on PATH
+        res = await asyncio.to_thread(
+            decompile_mod.decompile, st, cls, method, signature, lang, CFG
+        )
+        return _ok(f"decompiled {cls}.{method} ({res['lang']})", **res)
+    except Exception as e:
+        return _err("decompile_method failed", e)
