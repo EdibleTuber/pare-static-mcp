@@ -8,6 +8,7 @@ from pare_static_mcp.apk import loader as loader_mod
 from pare_static_mcp.apk import manifest as manifest_mod
 from pare_static_mcp.apk import state as state_mod
 from pare_static_mcp.apk import strings as strings_mod
+from pare_static_mcp.apk import symbols as symbols_mod
 
 CFG = load_config()
 
@@ -81,3 +82,18 @@ async def list_methods(cls: str) -> str:
         return _ok(f"{len(rows)} methods in {cls}", rows=rows)
     except Exception as e:
         return _err("list_methods failed", e)
+
+
+def _find_symbol_blocking(state: state_mod.APKState, symbol: str, kind: str, cls: str) -> list[dict]:
+    """Ensure xref then find symbol — runs on a thread (thread-safe via xref_lock)."""
+    loader_mod.ensure_xref(state)
+    return symbols_mod.find(state.analysis, symbol, kind, cls)
+
+
+async def find_symbol(symbol: str, kind: str = "def", cls: str = "") -> str:
+    try:
+        st = _require_current()
+        rows = await asyncio.to_thread(_find_symbol_blocking, st, symbol, kind, cls)
+        return _ok(f"{len(rows)} {kind} rows for {symbol}", rows=rows)
+    except Exception as e:
+        return _err("find_symbol failed", e)

@@ -36,7 +36,7 @@ TOOL_SPECS: list[ToolSpec] = [
              "for an API/text pattern use static_grep_smali). Returns rows of "
              "{class, method, signature, kind}; kind='def' is the implementation "
              "(feed its class+method+signature to static_decompile_method), "
-             "kind='caller' is who invokes it. kind defaults to 'def'. Pass 'class' "
+             "kind='caller' is who invokes it. kind defaults to 'def'. Pass 'cls' "
              "to scope the search to one class.",
              _in(symbol={"type": "string"},
                  kind={"type": "string", "enum": ["def", "caller", "both"]},
