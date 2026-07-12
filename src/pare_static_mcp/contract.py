@@ -31,7 +31,7 @@ TOOL_SPECS: list[ToolSpec] = [
              "should corroborate with the frida (dynamic) worker.",
              _in(path={"type": "string"})),
     ToolSpec("find_symbol", "low",
-             "STATIC. Find a Java METHOD or FIELD by NAME via cross-references - "
+             "STATIC. Find a Java METHOD by NAME via cross-references - "
              "NOT string literals (for a string constant use static_extract_strings; "
              "for an API/text pattern use static_grep_smali). Returns rows of "
              "{class, method, signature, kind}; kind='def' is the implementation "
