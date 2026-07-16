@@ -1,10 +1,12 @@
 from __future__ import annotations
 import asyncio
 import json
+import re
 from typing import Any
 from pare_static_mcp.config import load_config
 from pare_static_mcp.apk import classes as classes_mod
 from pare_static_mcp.apk import decompile as decompile_mod
+from pare_static_mcp.apk import graph as graph_mod
 from pare_static_mcp.apk import loader as loader_mod
 from pare_static_mcp.apk import manifest as manifest_mod
 from pare_static_mcp.apk import smali as smali_mod
@@ -122,3 +124,60 @@ async def decompile_method(cls: str, method: str, signature: str = "",
         return _ok(f"decompiled {cls}.{method} ({res['lang']})", **res)
     except Exception as e:
         return _err("decompile_method failed", e)
+
+
+def _resolve_methods(analysis, cls: str, method: str, signature: str = "") -> list:
+    """Resolve (cls, method[, signature]) to MethodAnalysis objects. Anchors + escapes
+    the regex (find_methods does an unanchored re.match; inner-class '$' is a metachar)."""
+    classname = ("^" + re.escape("L" + cls.replace(".", "/") + ";") + "$") if cls else "."
+    name = "^" + re.escape(method) + "$"
+    out = []
+    for ma in analysis.find_methods(classname=classname, methodname=name):
+        if signature and str(getattr(ma, "descriptor", "")) != signature:
+            continue
+        out.append(ma)
+    return out
+
+
+def _method_row(ma, depth: int | None = None) -> dict:
+    row = {
+        "class": str(ma.class_name),
+        "method": ma.name,
+        "signature": str(getattr(ma, "descriptor", "")),
+        "frontier": next(iter(ma.get_xref_from()), None) is None,
+    }
+    if depth is not None:
+        row["depth"] = depth
+    return row
+
+
+def _callers_of_blocking(state, method: str, cls: str, signature: str, depth: int):
+    loader_mod.ensure_xref(state)
+    roots = _resolve_methods(state.analysis, cls, method, signature)
+    if not roots:
+        return None  # signal: not found
+    md = min(depth, graph_mod.MAX_DEPTH)
+    dmap, _parent, trunc = graph_mod.traverse(graph_mod.callers, roots, max_depth=md)
+    rows = []
+    for ma, d in dmap.items():
+        if d == 0:
+            continue  # skip the target itself
+        rows.append(_method_row(ma, d))
+        if len(rows) >= graph_mod.MAX_ROWS:
+            trunc = True
+            break
+    return {"rows": rows, "truncated": trunc}
+
+
+async def callers_of(method: str, cls: str = "", signature: str = "", depth: int = 3) -> str:
+    try:
+        st = _require_current()
+        res = await asyncio.to_thread(
+            _callers_of_blocking, st, method, cls, signature, depth
+        )
+        if res is None:
+            return _err(f"root_not_found: {cls or '*'}.{method}")
+        return _ok(f"{len(res['rows'])} transitive callers of {method}",
+                   rows=res["rows"], diagnostics={"truncated": res["truncated"]})
+    except Exception as e:
+        return _err("callers_of failed", e)
