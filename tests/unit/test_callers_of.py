@@ -19,6 +19,7 @@ async def test_callers_of_multi_hop_reaches_frontier():
     assert onclick[0]["frontier"] is True
     for r in out["rows"]:
         assert {"class", "method", "signature", "depth", "frontier"} <= set(r)
+    assert "under_approximation" in out["diagnostics"]
 
 
 @requires_apk

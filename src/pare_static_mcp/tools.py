@@ -179,7 +179,8 @@ def _callers_of_blocking(state, method: str, cls: str, signature: str, depth: in
     return {"rows": rows, "truncated": trunc}
 
 
-async def callers_of(method: str, cls: str = "", signature: str = "", depth: int = 3) -> str:
+async def callers_of(method: str, cls: str = "", signature: str = "",
+                     depth: int = graph_mod.DEFAULT_DEPTH) -> str:
     try:
         st = _require_current()
         res = await asyncio.to_thread(
@@ -188,7 +189,8 @@ async def callers_of(method: str, cls: str = "", signature: str = "", depth: int
         if res is None:
             return _err(f"root_not_found: {cls or '*'}.{method}")
         return _ok(f"{len(res['rows'])} transitive callers of {method}",
-                   rows=res["rows"], diagnostics={"truncated": res["truncated"]})
+                   rows=res["rows"], diagnostics={"truncated": res["truncated"],
+                                                   "under_approximation": _UNDER_APPROX})
     except Exception as e:
         return _err("callers_of failed", e)
 
@@ -208,18 +210,20 @@ def _paths_between_blocking(state, from_method, from_cls, to_method, to_cls,
         # trivially unreachable, so path is empty rather than an _err; but we
         # surface target_resolved=False so a caller can tell an honest negative
         # apart from a query that never located the target at all.
-        return {"path": [], "diagnostics": {"target_resolved": False}}
+        return {"path": [], "diagnostics": {"target_resolved": False,
+                                             "under_approximation": _UNDER_APPROX}}
     md = min(max_depth, graph_mod.MAX_DEPTH)
     target_ids = {id(t) for t in targets}
     dmap, parent, _trunc = graph_mod.traverse(graph_mod.callees, sources, max_depth=md)
     hit = next((n for n in dmap if id(n) in target_ids), None)
     if hit is None:
-        return {"path": [], "diagnostics": {"target_resolved": True}}
+        return {"path": [], "diagnostics": {"target_resolved": True,
+                                             "under_approximation": _UNDER_APPROX}}
     chain = graph_mod.path_from_root(hit, parent)      # [target, ..., source]
     chain.reverse()                                    # -> [source, ..., target]
     return {"path": [{"class": str(m.class_name), "method": m.name,
                       "signature": str(getattr(m, "descriptor", ""))} for m in chain],
-            "diagnostics": {"target_resolved": True}}
+            "diagnostics": {"target_resolved": True, "under_approximation": _UNDER_APPROX}}
 
 
 async def paths_between(from_method: str, from_cls: str = "", to_method: str = "",
@@ -257,7 +261,8 @@ def _reachable_sinks_blocking(state, to, depth, allow_fallback):
     sink_source = "provided"
     if not parsed:
         if not allow_fallback:
-            return {"error": "no sinks supplied; retrieve from PAL or set allow_fallback=true"}
+            return {"error": f"no parseable sinks supplied (rejected: {rejected}); "
+                             "retrieve from PAL or set allow_fallback=true"}
         sink_source = "fallback"
         parsed = [(s, sink_match_mod.parse_sink(s)) for s in FALLBACK_SINKS]
 

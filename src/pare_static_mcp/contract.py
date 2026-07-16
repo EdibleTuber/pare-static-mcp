@@ -81,7 +81,9 @@ TOOL_SPECS: list[ToolSpec] = [
              "{class, method, signature, depth, frontier}; frontier=true means the "
              "method has no static caller (a framework-dispatched callback like onClick "
              "- the honest edge of static knowledge, where you hook and let Frida "
-             "confirm). depth defaults to 3, capped at 12.",
+             "confirm). depth defaults to 3, capped at 12. A method absent from the "
+             "results is not proof it is uncalled - reflection/dynamic dispatch edges "
+             "are invisible.",
              _in(method={"type": "string"}, cls={"type": "string"},
                  signature={"type": "string"}, depth={"type": "integer"})),
     ToolSpec("paths_between", "low",

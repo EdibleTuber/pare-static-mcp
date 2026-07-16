@@ -18,6 +18,7 @@ async def test_paths_between_encrypt_to_cipherstream():
     assert out["path"][0]["method"] == "encryptString"          # source first
     assert out["path"][-1]["method"] == "write"                 # target last
     assert out["diagnostics"]["target_resolved"] is True        # target located
+    assert "under_approximation" in out["diagnostics"]
 
 
 @requires_apk
