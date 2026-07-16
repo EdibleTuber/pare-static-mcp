@@ -75,6 +75,38 @@ TOOL_SPECS: list[ToolSpec] = [
              "init/hook target), exported components (pre-31 intent-filter rule "
              "applied), debuggable, allow_backup.",
              _in()),
+    ToolSpec("callers_of", "low",
+             "STATIC. Multi-hop REVERSE reachability: methods that transitively CALL "
+             "the target (generalizes find_symbol kind=caller to N hops). Rows of "
+             "{class, method, signature, depth, frontier}; frontier=true means the "
+             "method has no static caller (a framework-dispatched callback like onClick "
+             "- the honest edge of static knowledge, where you hook and let Frida "
+             "confirm). depth defaults to 3, capped at 12. A method absent from the "
+             "results is not proof it is uncalled - reflection/dynamic dispatch edges "
+             "are invisible.",
+             _in(method={"type": "string"}, cls={"type": "string"},
+                 signature={"type": "string"}, depth={"type": "integer"})),
+    ToolSpec("paths_between", "low",
+             "STATIC. Shortest witness call-path from a source method to a target "
+             "method (forward). Returns 'path' ordered source->target, or empty if "
+             "unreachable within max_depth (control-flow only; reflection/callbacks are "
+             "invisible - empty is not proof of safety). Use to confirm/expand a "
+             "hypothesized route.",
+             _in(from_method={"type": "string"}, from_cls={"type": "string"},
+                 to_method={"type": "string"}, to_cls={"type": "string"},
+                 from_signature={"type": "string"}, to_signature={"type": "string"},
+                 max_depth={"type": "integer"})),
+    ToolSpec("reachable_sinks", "low",
+             "STATIC. Given dangerous SINK signatures (from PAL's sink catalog, dotted "
+             "or smali), walk BACKWARD to the app methods that reach each sink - those "
+             "are your hook candidates. Rows of {candidate, sink, path (candidate->sink), "
+             "frontier}. Pass 'to' as a list of 'Class.method' strings. diagnostics "
+             "reports unmatched_sinks, rejected_sinks, sink_source (provided|fallback), "
+             "and an under_approximation note - an empty result is NOT proof of safety. "
+             "Empty 'to' errors unless allow_fallback=true (a tiny generic catalog).",
+             _in(to={"type": "array", "items": {"type": "string"}},
+                 depth={"type": "integer"},
+                 allow_fallback={"type": "boolean"})),
 ]
 
 

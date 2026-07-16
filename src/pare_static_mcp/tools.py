@@ -1,18 +1,30 @@
 from __future__ import annotations
 import asyncio
 import json
+import re
 from typing import Any
 from pare_static_mcp.config import load_config
 from pare_static_mcp.apk import classes as classes_mod
 from pare_static_mcp.apk import decompile as decompile_mod
+from pare_static_mcp.apk import graph as graph_mod
 from pare_static_mcp.apk import loader as loader_mod
 from pare_static_mcp.apk import manifest as manifest_mod
 from pare_static_mcp.apk import smali as smali_mod
 from pare_static_mcp.apk import state as state_mod
 from pare_static_mcp.apk import strings as strings_mod
 from pare_static_mcp.apk import symbols as symbols_mod
+from pare_static_mcp.apk import sink_match as sink_match_mod
 
 CFG = load_config()
+
+FALLBACK_SINKS = [
+    "java.lang.Runtime.exec",
+    "java.lang.reflect.Method.invoke",
+    "android.util.Log.e",
+]
+
+_UNDER_APPROX = ("control-flow only; reflection/callback/dispatch edges are invisible "
+                 "- an empty result is NOT proof of safety, confirm dynamically")
 
 
 def _ok(summary: str, **extra: Any) -> str:
@@ -122,3 +134,190 @@ async def decompile_method(cls: str, method: str, signature: str = "",
         return _ok(f"decompiled {cls}.{method} ({res['lang']})", **res)
     except Exception as e:
         return _err("decompile_method failed", e)
+
+
+def _resolve_methods(analysis, cls: str, method: str, signature: str = "") -> list:
+    """Resolve (cls, method[, signature]) to MethodAnalysis objects. Anchors + escapes
+    the regex (find_methods does an unanchored re.match; inner-class '$' is a metachar)."""
+    classname = ("^" + re.escape("L" + cls.replace(".", "/") + ";") + "$") if cls else "."
+    name = "^" + re.escape(method) + "$"
+    out = []
+    for ma in analysis.find_methods(classname=classname, methodname=name):
+        if signature and str(getattr(ma, "descriptor", "")) != signature:
+            continue
+        out.append(ma)
+    return out
+
+
+def _method_row(ma, depth: int | None = None) -> dict:
+    row = {
+        "class": str(ma.class_name),
+        "method": ma.name,
+        "signature": str(getattr(ma, "descriptor", "")),
+        "frontier": next(iter(ma.get_xref_from()), None) is None,
+    }
+    if depth is not None:
+        row["depth"] = depth
+    return row
+
+
+def _callers_of_blocking(state, method: str, cls: str, signature: str, depth: int):
+    loader_mod.ensure_xref(state)
+    roots = _resolve_methods(state.analysis, cls, method, signature)
+    if not roots:
+        return None  # signal: not found
+    md = min(depth, graph_mod.MAX_DEPTH)
+    dmap, _parent, trunc = graph_mod.traverse(graph_mod.callers, roots, max_depth=md)
+    rows = []
+    for ma, d in dmap.items():
+        if d == 0:
+            continue  # skip the target itself
+        rows.append(_method_row(ma, d))
+        if len(rows) >= graph_mod.MAX_ROWS:
+            trunc = True
+            break
+    return {"rows": rows, "truncated": trunc}
+
+
+async def callers_of(method: str, cls: str = "", signature: str = "",
+                     depth: int = graph_mod.DEFAULT_DEPTH) -> str:
+    try:
+        st = _require_current()
+        res = await asyncio.to_thread(
+            _callers_of_blocking, st, method, cls, signature, depth
+        )
+        if res is None:
+            return _err(f"root_not_found: {cls or '*'}.{method}")
+        return _ok(f"{len(res['rows'])} transitive callers of {method}",
+                   rows=res["rows"], diagnostics={"truncated": res["truncated"],
+                                                   "under_approximation": _UNDER_APPROX})
+    except Exception as e:
+        return _err("callers_of failed", e)
+
+
+def _paths_between_blocking(state, from_method, from_cls, to_method, to_cls,
+                            from_sig, to_sig, max_depth):
+    loader_mod.ensure_xref(state)
+    sources = _resolve_methods(state.analysis, from_cls, from_method, from_sig)
+    if not sources:
+        return {"error": "root_not_found", "which": f"{from_cls or '*'}.{from_method}"}
+    targets = _resolve_methods(state.analysis, to_cls, to_method, to_sig)
+    if not targets:
+        # The target resolved to zero MethodAnalysis nodes. That can mean either
+        # a genuine "never called anywhere in the app" (androguard only
+        # materializes nodes for referenced symbols - verified against raw
+        # bytecode, not just xrefs) OR a typo'd target class/method. Both are
+        # trivially unreachable, so path is empty rather than an _err; but we
+        # surface target_resolved=False so a caller can tell an honest negative
+        # apart from a query that never located the target at all.
+        return {"path": [], "diagnostics": {"target_resolved": False,
+                                             "under_approximation": _UNDER_APPROX}}
+    md = min(max_depth, graph_mod.MAX_DEPTH)
+    target_ids = {id(t) for t in targets}
+    dmap, parent, _trunc = graph_mod.traverse(graph_mod.callees, sources, max_depth=md)
+    hit = next((n for n in dmap if id(n) in target_ids), None)
+    if hit is None:
+        return {"path": [], "diagnostics": {"target_resolved": True,
+                                             "under_approximation": _UNDER_APPROX}}
+    chain = graph_mod.path_from_root(hit, parent)      # [target, ..., source]
+    chain.reverse()                                    # -> [source, ..., target]
+    return {"path": [{"class": str(m.class_name), "method": m.name,
+                      "signature": str(getattr(m, "descriptor", ""))} for m in chain],
+            "diagnostics": {"target_resolved": True, "under_approximation": _UNDER_APPROX}}
+
+
+async def paths_between(from_method: str, from_cls: str = "", to_method: str = "",
+                        to_cls: str = "", from_signature: str = "", to_signature: str = "",
+                        max_depth: int = 12) -> str:
+    try:
+        st = _require_current()
+        res = await asyncio.to_thread(
+            _paths_between_blocking, st, from_method, from_cls, to_method, to_cls,
+            from_signature, to_signature, max_depth,
+        )
+        if res.get("error"):
+            return _err(f"{res['error']}: {res.get('which', '')}")
+        n = len(res["path"])
+        return _ok(f"path of {n} nodes" if n else "no static path (control-flow only; "
+                   "reflection/callbacks invisible - confirm dynamically)",
+                   path=res["path"], diagnostics=res.get("diagnostics", {}))
+    except Exception as e:
+        return _err("paths_between failed", e)
+
+
+def _find_sink_nodes(analysis, parsed):
+    """MethodAnalysis nodes matching a parsed (class_smali, method), incl. external."""
+    smali_cls, method = parsed
+    dotted = smali_cls[1:-1].replace("/", ".")     # Lfoo/Bar; -> foo.Bar
+    return _resolve_methods(analysis, dotted, method)
+
+
+def _reachable_sinks_blocking(state, to, depth, allow_fallback):
+    loader_mod.ensure_xref(state)
+    parsed, rejected = [], []
+    for sig in to:
+        p = sink_match_mod.parse_sink(sig)
+        (parsed.append((sig, p)) if p else rejected.append(sig))
+    sink_source = "provided"
+    if not parsed:
+        if not allow_fallback:
+            return {"error": f"no parseable sinks supplied (rejected: {rejected}); "
+                             "retrieve from PAL or set allow_fallback=true"}
+        sink_source = "fallback"
+        parsed = [(s, sink_match_mod.parse_sink(s)) for s in FALLBACK_SINKS]
+
+    md = min(depth, graph_mod.MAX_DEPTH)
+    rows, unmatched, seen = [], [], set()
+    truncated = False
+    for sig, p in parsed:
+        sink_nodes = _find_sink_nodes(state.analysis, p)
+        if not sink_nodes:
+            unmatched.append(sig)
+            continue
+        dmap, parent, trunc = graph_mod.traverse(graph_mod.callers, sink_nodes, max_depth=md)
+        truncated = truncated or trunc
+        sink_label = {"class": p[0], "method": p[1]}
+        for ma, d in dmap.items():
+            if d == 0 or ma.is_external():
+                continue                       # skip the sink itself and framework frames
+            key = (str(ma.class_name), ma.name, str(getattr(ma, "descriptor", "")), p)
+            if key in seen:
+                continue
+            seen.add(key)
+            chain = graph_mod.path_from_root(ma, parent)      # [candidate, ..., sink]
+            rows.append({
+                "candidate": {"class": str(ma.class_name), "method": ma.name,
+                              "signature": str(getattr(ma, "descriptor", ""))},
+                "sink": sink_label,
+                "path": [{"class": str(m.class_name), "method": m.name,
+                          "signature": str(getattr(m, "descriptor", ""))} for m in chain],
+                "frontier": next(iter(ma.get_xref_from()), None) is None,
+            })
+            if len(rows) >= graph_mod.MAX_ROWS:
+                truncated = True
+                break
+        if truncated:
+            break
+    return {"rows": rows, "diagnostics": {
+        "sink_source": sink_source, "sink_count": len(parsed),
+        "candidate_count": len(rows), "unmatched_sinks": unmatched,
+        "rejected_sinks": rejected, "truncated": truncated,
+        "under_approximation": _UNDER_APPROX}}
+
+
+async def reachable_sinks(to: list[str] | None = None, depth: int = 12,
+                          allow_fallback: bool = False) -> str:
+    try:
+        to = list(to or [])
+        if not to and not allow_fallback:
+            return _err("no sinks supplied; retrieve from PAL or set allow_fallback=true")
+        st = _require_current()
+        res = await asyncio.to_thread(_reachable_sinks_blocking, st, to, depth, allow_fallback)
+        if res.get("error"):
+            return _err(res["error"])
+        return _ok(f"{res['diagnostics']['candidate_count']} hook candidates reach "
+                   f"{res['diagnostics']['sink_count']} sink(s) "
+                   f"[{res['diagnostics']['sink_source']}]",
+                   rows=res["rows"], diagnostics=res["diagnostics"])
+    except Exception as e:
+        return _err("reachable_sinks failed", e)
