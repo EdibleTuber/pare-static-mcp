@@ -191,23 +191,25 @@ def _paths_between_blocking(state, from_method, from_cls, to_method, to_cls,
         return {"error": "root_not_found", "which": f"{from_cls or '*'}.{from_method}"}
     targets = _resolve_methods(state.analysis, to_cls, to_method, to_sig)
     if not targets:
-        # The target method is a real API name but androguard's Analysis only
-        # materializes a MethodAnalysis node for symbols actually referenced
-        # somewhere in the app (verified against raw bytecode, not just xrefs).
-        # A target with zero references anywhere is trivially unreachable from
-        # any source, not a typo in the query - report it as "no path", not
-        # an error, so callers can't confuse "never called" with "bad input".
-        return {"path": []}
+        # The target resolved to zero MethodAnalysis nodes. That can mean either
+        # a genuine "never called anywhere in the app" (androguard only
+        # materializes nodes for referenced symbols - verified against raw
+        # bytecode, not just xrefs) OR a typo'd target class/method. Both are
+        # trivially unreachable, so path is empty rather than an _err; but we
+        # surface target_resolved=False so a caller can tell an honest negative
+        # apart from a query that never located the target at all.
+        return {"path": [], "diagnostics": {"target_resolved": False}}
     md = min(max_depth, graph_mod.MAX_DEPTH)
     target_ids = {id(t) for t in targets}
     dmap, parent, _trunc = graph_mod.traverse(graph_mod.callees, sources, max_depth=md)
     hit = next((n for n in dmap if id(n) in target_ids), None)
     if hit is None:
-        return {"path": []}
+        return {"path": [], "diagnostics": {"target_resolved": True}}
     chain = graph_mod.path_from_root(hit, parent)      # [target, ..., source]
     chain.reverse()                                    # -> [source, ..., target]
     return {"path": [{"class": str(m.class_name), "method": m.name,
-                      "signature": str(getattr(m, "descriptor", ""))} for m in chain]}
+                      "signature": str(getattr(m, "descriptor", ""))} for m in chain],
+            "diagnostics": {"target_resolved": True}}
 
 
 async def paths_between(from_method: str, from_cls: str = "", to_method: str = "",
@@ -224,6 +226,6 @@ async def paths_between(from_method: str, from_cls: str = "", to_method: str = "
         n = len(res["path"])
         return _ok(f"path of {n} nodes" if n else "no static path (control-flow only; "
                    "reflection/callbacks invisible - confirm dynamically)",
-                   path=res["path"])
+                   path=res["path"], diagnostics=res.get("diagnostics", {}))
     except Exception as e:
         return _err("paths_between failed", e)
