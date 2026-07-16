@@ -13,8 +13,18 @@ from pare_static_mcp.apk import smali as smali_mod
 from pare_static_mcp.apk import state as state_mod
 from pare_static_mcp.apk import strings as strings_mod
 from pare_static_mcp.apk import symbols as symbols_mod
+from pare_static_mcp.apk import sink_match as sink_match_mod
 
 CFG = load_config()
+
+FALLBACK_SINKS = [
+    "java.lang.Runtime.exec",
+    "java.lang.reflect.Method.invoke",
+    "android.util.Log.e",
+]
+
+_UNDER_APPROX = ("control-flow only; reflection/callback/dispatch edges are invisible "
+                 "- an empty result is NOT proof of safety, confirm dynamically")
 
 
 def _ok(summary: str, **extra: Any) -> str:
@@ -229,3 +239,80 @@ async def paths_between(from_method: str, from_cls: str = "", to_method: str = "
                    path=res["path"], diagnostics=res.get("diagnostics", {}))
     except Exception as e:
         return _err("paths_between failed", e)
+
+
+def _find_sink_nodes(analysis, parsed):
+    """MethodAnalysis nodes matching a parsed (class_smali, method), incl. external."""
+    smali_cls, method = parsed
+    dotted = smali_cls[1:-1].replace("/", ".")     # Lfoo/Bar; -> foo.Bar
+    return _resolve_methods(analysis, dotted, method)
+
+
+def _reachable_sinks_blocking(state, to, depth, allow_fallback):
+    loader_mod.ensure_xref(state)
+    parsed, rejected = [], []
+    for sig in to:
+        p = sink_match_mod.parse_sink(sig)
+        (parsed.append((sig, p)) if p else rejected.append(sig))
+    sink_source = "provided"
+    if not parsed:
+        if not allow_fallback:
+            return {"error": "no sinks supplied; retrieve from PAL or set allow_fallback=true"}
+        sink_source = "fallback"
+        parsed = [(s, sink_match_mod.parse_sink(s)) for s in FALLBACK_SINKS]
+
+    md = min(depth, graph_mod.MAX_DEPTH)
+    rows, unmatched, seen = [], [], set()
+    truncated = False
+    for sig, p in parsed:
+        sink_nodes = _find_sink_nodes(state.analysis, p)
+        if not sink_nodes:
+            unmatched.append(sig)
+            continue
+        dmap, parent, trunc = graph_mod.traverse(graph_mod.callers, sink_nodes, max_depth=md)
+        truncated = truncated or trunc
+        sink_label = {"class": p[0], "method": p[1]}
+        for ma, d in dmap.items():
+            if d == 0 or ma.is_external():
+                continue                       # skip the sink itself and framework frames
+            key = (str(ma.class_name), ma.name, str(getattr(ma, "descriptor", "")), p)
+            if key in seen:
+                continue
+            seen.add(key)
+            chain = graph_mod.path_from_root(ma, parent)      # [candidate, ..., sink]
+            rows.append({
+                "candidate": {"class": str(ma.class_name), "method": ma.name,
+                              "signature": str(getattr(ma, "descriptor", ""))},
+                "sink": sink_label,
+                "path": [{"class": str(m.class_name), "method": m.name,
+                          "signature": str(getattr(m, "descriptor", ""))} for m in chain],
+                "frontier": next(iter(ma.get_xref_from()), None) is None,
+            })
+            if len(rows) >= graph_mod.MAX_ROWS:
+                truncated = True
+                break
+        if truncated:
+            break
+    return {"rows": rows, "diagnostics": {
+        "sink_source": sink_source, "sink_count": len(parsed),
+        "candidate_count": len(rows), "unmatched_sinks": unmatched,
+        "rejected_sinks": rejected, "truncated": truncated,
+        "under_approximation": _UNDER_APPROX}}
+
+
+async def reachable_sinks(to: list[str] | None = None, depth: int = 12,
+                          allow_fallback: bool = False) -> str:
+    try:
+        to = list(to or [])
+        if not to and not allow_fallback:
+            return _err("no sinks supplied; retrieve from PAL or set allow_fallback=true")
+        st = _require_current()
+        res = await asyncio.to_thread(_reachable_sinks_blocking, st, to, depth, allow_fallback)
+        if res.get("error"):
+            return _err(res["error"])
+        return _ok(f"{res['diagnostics']['candidate_count']} hook candidates reach "
+                   f"{res['diagnostics']['sink_count']} sink(s) "
+                   f"[{res['diagnostics']['sink_source']}]",
+                   rows=res["rows"], diagnostics=res["diagnostics"])
+    except Exception as e:
+        return _err("reachable_sinks failed", e)
