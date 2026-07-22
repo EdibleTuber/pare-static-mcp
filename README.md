@@ -16,6 +16,16 @@ Static-analysis MCP worker for PARE (Android APK). Provides seven read-only tool
 
 Tools surface to the model as `static_*` when mounted into PARE.
 
+## Role in the RE loop
+
+These tools serve the **front** of PARE's reverse-engineering loop ([Orient → Enumerate → Hypothesize → Verify → Re-orient](https://github.com/EdibleTuber/PARE#how-pare-works-the-re-loop)) — static analysis forms the hypothesis that dynamic analysis ([`pare-frida-mcp`](https://github.com/EdibleTuber/pare-frida-mcp)) later *confirms*, rather than re-discovers:
+
+- **Orient** — `read_manifest` (entry points, components, security flags) and `extract_strings` (symptoms, hints) locate the region of code to investigate.
+- **Enumerate** — `grep_smali` and `find_symbol` build the *candidate set*: the sites / API family that could produce the symptom, before committing to one. (A search that matches several near-duplicate classes is where PARE pauses to have the operator disambiguate.)
+- **Hypothesize** — `list_methods` and `decompile_method` pin the exact target and the value you expect to observe at runtime.
+
+Results larger than the inline budget come back as capture refs (PARE's capture layer); the agent reads them with `read_capture`. PARE is the hub that drives these tools and carries the loop — see [PARE](https://github.com/EdibleTuber/PARE).
+
 ## Single-APK-open model
 
 Only one APK is held in memory at a time. `load_apk` atomically replaces the current target — each subsequent call closes the previous one. All other tools require `load_apk` to have been called first and will return an error envelope if no APK is loaded.
