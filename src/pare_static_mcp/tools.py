@@ -108,7 +108,12 @@ async def find_symbol(symbol: str, kind: str = "def", cls: str = "") -> str:
     try:
         st = _require_current()
         rows = await asyncio.to_thread(_find_symbol_blocking, st, symbol, kind, cls)
-        return _ok(f"{len(rows)} {kind} rows for {symbol}", rows=rows)
+        n_class = sum(1 for r in rows if r.get("kind") == "class")
+        n_other = len(rows) - n_class
+        # Surface class matches explicitly so a name that is a class (not just a
+        # same-named launcher method) is visible even when it yields 0 method rows.
+        extra = f" (+{n_class} class - pass its class to static_list_methods)" if n_class else ""
+        return _ok(f"{n_other} {kind} rows for {symbol}{extra}", rows=rows)
     except Exception as e:
         return _err("find_symbol failed", e)
 

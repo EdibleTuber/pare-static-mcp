@@ -10,6 +10,11 @@ TEST_CLASS = "sg.vp.owasp_mobile.OMTG_Android.OMTG_DATAST_001_KeyStore"
 TEST_METHOD = "encryptString"
 TEST_DESCRIPTOR = "(Ljava/lang/String;)V"
 TEST_STRING = "Dummy"
+# A name that is BOTH an Activity class AND a same-named onClick launcher method
+# on MyActivity — the case that traps a method-only find_symbol. The activity
+# class holds decryptString(); the launcher is a one-line startActivity.
+TEST_DUAL_NAME = "OMTG_DATAST_011_Memory"
+TEST_DUAL_CLASS = "sg.vp.owasp_mobile.OMTG_Android.OMTG_DATAST_011_Memory"
 
 def apk_path() -> Path:
     return Path(os.environ.get("PARE_STATIC_TEST_APK", _DEFAULT))
