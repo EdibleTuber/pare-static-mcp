@@ -31,15 +31,20 @@ TOOL_SPECS: list[ToolSpec] = [
              "should corroborate with the frida (dynamic) worker.",
              _in(path={"type": "string"})),
     ToolSpec("find_symbol", "low",
-             "STATIC. Find a Java METHOD by NAME via cross-references - "
-             "NOT string literals (for a string constant use static_extract_strings; "
-             "for an API/text pattern use static_grep_smali). Returns rows of "
-             "{class, method, signature, kind}; kind='def' is the implementation "
-             "(feed its class+method+signature to static_decompile_method), "
-             "kind='caller' is who invokes it. kind defaults to 'def'. Pass 'cls' "
-             "to scope the search to one class.",
+             "STATIC. Resolve a Java NAME - a METHOD or a CLASS - via "
+             "cross-references, NOT string literals (for a string constant use "
+             "static_extract_strings; for an API/text pattern use "
+             "static_grep_smali). Returns rows of {class, method, signature, "
+             "kind}: kind='def' is a method implementation (feed its "
+             "class+method+signature to static_decompile_method); kind='caller' "
+             "is who invokes it; kind='class' means the NAME is a class (e.g. an "
+             "Activity) - pass its 'class' to static_list_methods, because an "
+             "Activity's real logic lives in its own methods, NOT in the "
+             "same-named onClick launcher method that merely startActivity()s it. "
+             "kind defaults to 'def' and also returns class matches; kind='class' "
+             "narrows to classes only. Pass 'cls' to scope the search to one class.",
              _in(symbol={"type": "string"},
-                 kind={"type": "string", "enum": ["def", "caller", "both"]},
+                 kind={"type": "string", "enum": ["def", "caller", "both", "class"]},
                  cls={"type": "string"})),
     ToolSpec("grep_smali", "low",
              "STATIC. Regex search over smali instructions and the DEX string pool "
@@ -49,10 +54,12 @@ TOOL_SPECS: list[ToolSpec] = [
              "broad patterns are captured and slow to page.",
              _in(pattern={"type": "string"})),
     ToolSpec("list_methods", "low",
-             "STATIC. List the methods of ONE class (to find a class or a symbol "
-             "use static_find_symbol). Returns rows of {method, descriptor, flags, "
-             "xref_count}; use this to choose a hook/decompile target without "
-             "decompiling the whole class.",
+             "STATIC. List the methods of ONE class - pass its name (dotted or "
+             "smali). To discover a class or method BY NAME first, use "
+             "static_find_symbol (its kind='class' rows give you the class name to "
+             "pass here). Returns rows of {method, descriptor, flags, xref_count}; "
+             "use this to choose a hook/decompile target without decompiling the "
+             "whole class.",
              _in(cls={"type": "string"})),
     ToolSpec("extract_strings", "low",
              "STATIC. Extract string/constant literals from the DEX string pool "
