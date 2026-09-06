@@ -19,6 +19,13 @@ dev = ["pytest", "pytest-asyncio"]
 [project.scripts]
 pare-static-mcp = "pare_static_mcp.server:main"
 
+[tool.hatch.metadata]
+# Required for the pare-worker-kit git dependency above. Without it,
+# hatchling refuses ANY direct URL reference and the package cannot be
+# installed at all -- not "installs with a warning", but a hard
+# metadata-generation failure on a clean checkout.
+allow-direct-references = true
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/pare_static_mcp"]
 
