@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
-from pare_worker_kit import RISK_TIER_META_KEY, run_worker
+from pare_worker_kit import (PRODUCES_META_KEY, RISK_TIER_META_KEY,
+                            run_worker)
 from pare_static_mcp.contract import TOOL_SPECS
 
 try:
@@ -18,7 +19,8 @@ def build_server() -> FastMCP:
         if handler is None:
             handler = _stub_for(spec.name)
         server.add_tool(handler, name=spec.name, description=spec.description,
-                        meta={RISK_TIER_META_KEY: spec.risk_tier})
+                        meta={RISK_TIER_META_KEY: spec.risk_tier,
+                              PRODUCES_META_KEY: spec.produces})
     return server
 
 
